@@ -3,7 +3,7 @@
 This pipeline captures database changes in near real-time and prepares them for downstream delivery (e.g., to Kinesis Data Streams). It's designed for minimal source impact, with DMS acting as a managed extractor.
 
 <details>
-    <summary>Click to view the floe of Data from RDS to Kinesis Data Streams</summary>
+    <summary>Click to view the flow of Data from RDS to Kinesis Data Streams</summary>
 
 #### High-Level Overview for This Segment
 ```
@@ -85,6 +85,122 @@ Now, breaking down every component, configuration, behavior, and parameter.
   - **LOB/Complex Types**: `SupportLobs=true` with `LobMaxSize=0` captures unlimited size; varying to 32MB truncates, logging warnings—behavior: Downstream gets partial data, useful for summaries but lossy for blobs.
   - **Monitoring**: CloudWatch metrics: `FullLoadThroughputRowsSource`, `CDCLatencySource` (should <10s), `ReplicationTaskState`. Logs in CloudWatch Logs for debugging (e.g., "Captured change at LSN: 123").
   - **Edge Cases**: Nested transactions (PostgreSQL) preserved; if RDS parameter group changes mid-task, restart DMS. For encrypted RDS, DMS needs KMS key access.
+
+From here, the data is sent to Kinesis Data Streams or any other services.
+
+</details>
+
+## Forensic Audit Trail: How ONE Row Change Is Handled from RDS to DMS
+
+**Complete Data-handling Bible** for **RDS → DMS CDC**.
+
+<details>
+    <summary>Click to view the How ONE Row Change Is Handled from RDS to DMS</summary>
+
+────────────────────────
+**Forensic Audit Trail: How ONE Row Change Is Handled**
+────────────────────────
+1. **14:32:07.123456**  
+   Your app runs:  
+   `UPDATE orders SET status='shipped' WHERE id=98765;`
+
+2. **14:32:07.123789** (333 µs later)  
+   RDS storage engine writes the **row image** into the **redo log** (MySQL) or **WAL segment** (PostgreSQL).
+
+3. **14:32:07.124001** (212 µs later)  
+   Binary log / WAL sender flushes the change to disk **with commit marker**.
+
+4. **14:32:07.124500**  
+   DMS replication slot (named `dms_slot`) **receives the decoded tuple**:
+   ```
+   {
+     "before": {"id":98765, "status":"pending"},
+     "after":  {"id":98765, "status":"shipped"},
+     "op": "U",
+     "lsn": "0/2A3B4C0",
+     "ts_ms": 1733500327123
+   }
+   ```
+
+5. **14:32:07.124800**  
+   DMS **ChangeProcessingTuning** engine:
+   - Adds to **in-memory batch #427** (current size: 683 records)
+   - Tags with **transaction-id 0x9F3C**
+   - Applies **column-name casing rule** (uppercase → lowercase)
+   - Adds **metadata**:
+     ```json
+     "metadata": {
+       "timestamp": "2025-11-07T14:32:07.123Z",
+       "operation": "update",
+       "schema-name": "sales",
+       "table-name": "orders",
+       "partition-key": "sales-orders-98765"
+     }
+     ```
+
+6. **14:32:07.126000**  
+   Batch #427 reaches **1000 records** → DMS **serialises to JSON Lines**:
+   ```
+   {"metadata":{...},"data":{"before":{...},"after":{...}}}
+   ```
+
+7. **14:32:07.126300**  
+   DMS **compresses** the 1000-line blob with **zlib level 6** (default).
+
+8. **14:32:07.126600**  
+   DMS **encrypts in-flight** with TLS 1.3 to the **target endpoint**.
+
+9. **14:32:07.127100**  
+   DMS calls **PutRecords** (batch API) against **Kinesis Data Streams**:
+   - Stream: `rds-cdc-stream`
+   - 1 request, 1000 records, 1.38 MB payload
+   - PartitionKey = `sales-orders-98765` → lands in **shard-000000000003**
+   - SequenceNumber returned: `396279487123456789012345678901`
+
+10. **14:32:07.128500**  
+    Kinesis **persists** the record **three times** across 3 AZs.
+
+11. **14:32:07.129000**  
+    DMS writes **checkpoint** to its internal table:
+    `last_lsn = 0/2A3B4C0, last_seq = 3962794871…`
+
+12. **14:32:07.130000**  
+    DMS **commits** the transaction batch → **zero duplicates** even if it retries.
+
+That is **EVERY nanosecond** of handling for ONE row.
+
+────────────────────────
+**Mini-Checklist: Prove You Covered EVERYTHING**
+(put a check-mark when you see it in prod)
+
+- [x] Row image captured in redo/WAL  
+- [x] Commit marker included  
+- [x] Replication slot lag < 5 MB  
+- [x] Before/after images present  
+- [x] LOBs chunked at 64 KB  
+- [x] Transaction boundary preserved  
+- [x] Column casing rule applied  
+- [x] Partition key = schema-table-id  
+- [x] JSON Lines + zlib  
+- [x] TLS 1.3 + SSE-KMS  
+- [x] PutRecords batch of 1000  
+- [x] SequenceNumber stored  
+- [x] Checkpoint every 30 s  
+- [x] CloudWatch: CDCLatencySource = 987 ms  
+
+```markdown
+# RDS → DMS CDC Data-Handling (14:32:07.123456)
+1. App → UPDATE orders → redo/WAL
+2. Binlog/WAL flush → commit marker
+3. DMS slot → decoded tuple (before/after)
+4. In-memory batch #427 → 1000-record threshold
+5. Add metadata + lowercase columns
+6. JSON Lines → zlib → TLS 1.3
+7. PutRecords → shard-0003 → seq 3962794871…
+8. 3-AZ durable write
+9. Checkpoint lsn 0/2A3B4C0
+10. Zero-duplicate guarantee
+```
 
 From here, the data is sent to Kinesis Data Streams or any other services.
 
