@@ -1,10 +1,5 @@
 # AWS-DMS
-Database Migration Service
-Below is a clean, concise documentation-style write-up based on your provided calculations.
-
----
-
-## **AWS Database Migration Service (DMS) – Cost Comparison Documentation**
+## **AWS Database Migration Service (DMS) – Cost Comparison**
 
 **Region:** Asia Pacific (Mumbai)
 
