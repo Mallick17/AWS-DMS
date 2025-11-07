@@ -75,8 +75,6 @@
 
 DMS Serverless offers **significantly lower monthly costs** compared to On-Demand instances, especially for continuous or small-scale migrations.
 
-Table with **data transfer rates per GB** for different transfer scenarios in the Mumbai region (ap-south-1), for various destination types:
-
 ### The cost details and rates provided cover the entire data flow from **RDS as the source**, through **AWS DMS replication service**, and then to various **destination targets** such as Amazon S3, EC2 instances, another RDS instance, or S3 Tables.
 
 Specifically, the billing components include:
