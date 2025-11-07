@@ -80,4 +80,12 @@ Below is a clean, concise documentation-style write-up based on your provided ca
 
 DMS Serverless offers **significantly lower monthly costs** compared to On-Demand instances, especially for continuous or small-scale migrations.
 
+Table with **data transfer rates per GB** for different transfer scenarios in the Mumbai region (ap-south-1), for various destination types:
+
+| Transfer Scenario               | S3 / S3 Tables (USD/GB) | EC2 Instance (USD/GB) | Another RDS (USD/GB) |
+|--------------------------------|-------------------------|----------------------|----------------------|
+| Same AZ in Mumbai               | $0.00                   | $0.00                | $0.00                |
+| Different AZs Mumbai            | $0.01                   | $0.01                | $0.01                |
+| Cross-Region (Mumbai to SG/US) | $0.02                   | $0.02                | $0.02                |
+
 ---
